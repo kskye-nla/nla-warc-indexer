@@ -1,0 +1,73 @@
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+  backoffLimit: 3
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: solr-setup
+  namespace: warc-solr
+  labels:
+    app: solr-setup
+spec:
+  template:
+    metadata:
+      labels:
+        app: solr-setup
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+      - name: wait-for-solr
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          echo 'Waiting for Solr nodes...'
+          until nc -z solr9-node1 8983 && nc -z solr9-node2 8983; do
+            echo 'Waiting for Solr nodes...'
+            sleep 5
+          done
+          echo 'Solr nodes are ready!'
+      containers:
+      - name: setup
+        image: your-registry/warc-solr:latest  # Same image as Solr nodes
+        env:
+        - name: ZK_HOST
+          value: "zookeeper:2181"
+        command: ["/opt/scripts/setup-solrcloud.sh"]
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: populate-cloud
+  namespace: warc-solr
+  labels:
+    app: populate-cloud
+spec:
+  template:
+    metadata:
+      labels:
+        app: populate-cloud
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: populate
+        image: your-registry/warc-solr:latest  # Same image as Solr nodes
+        env:
+        - name: SOLR_URL
+          value: "http://solr9-node1:8983/solr/discovery"
+        - name: SOLR_MODE
+          value: "cloud"
+        command: ["/opt/scripts/populate.sh"]
+        resources:
+          requests:
+            memory: "512Mi"

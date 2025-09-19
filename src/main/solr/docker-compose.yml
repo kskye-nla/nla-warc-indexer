@@ -1,31 +1,128 @@
-version: "3.3"
+version: "3.8"
 
 services:
 
-  # Solr instance for running tests against
-  solr:
-    build:
-      context: .
-      args:
-        - "http_proxy=${HTTP_PROXY}"
-        - "https_proxy=${HTTPS_PROXY}"
+  # ZooKeeper for SolrCloud coordination
+  zookeeper:
+    image: zookeeper:3.8
+    container_name: warc-zookeeper
+    hostname: zookeeper
     ports:
-      - "18983:8983"
+      - "2181:2181"
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_SERVERS: server.1=0.0.0.0:2888:3888;2181
+      ZOO_4LW_COMMANDS_WHITELIST: mntr,conf,ruok
+    volumes:
+      - zk_data:/data
+      - zk_datalog:/datalog
+    networks:
+      - solr-network
 
-  solr9:
+  # SolrCloud Node 1
+  solr9-node1:
     build:
       context: .
       dockerfile: Dockerfile9
       args:
         - "http_proxy=${HTTP_PROXY}"
         - "https_proxy=${HTTPS_PROXY}"
+    container_name: warc-solr9-node1
+    hostname: solr9-node1
     ports:
       - "38983:8983"
-
-  # Hook to populate the image with test data:
-  populate:
-    build: .
-    command: "/populate.sh"
     environment:
-      - "SOLR_URL=http://solr:8983/solr/discovery"
+      - ZK_HOST=zookeeper:2181
+      - SOLR_HOST=solr9-node1
+      - SOLR_HEAP=1g
+    depends_on:
+      - zookeeper
+    volumes:
+      - solr1_data:/var/solr
+    networks:
+      - solr-network
+    command: >
+      bash -c "
+        echo 'Waiting for ZooKeeper...'
+        while ! nc -z zookeeper 2181; do sleep 1; done
+        echo 'Starting SolrCloud...'
+        solr-foreground -c -z zookeeper:2181
+      "
+
+  # SolrCloud Node 2
+  solr9-node2:
+    build:
+      context: .
+      dockerfile: Dockerfile9
+      args:
+        - "http_proxy=${HTTP_PROXY}"
+        - "https_proxy=${HTTPS_PROXY}"
+    container_name: warc-solr9-node2
+    hostname: solr9-node2
+    ports:
+      - "39983:8983"
+    environment:
+      - ZK_HOST=zookeeper:2181
+      - SOLR_HOST=solr9-node2
+      - SOLR_HEAP=1g
+    depends_on:
+      - zookeeper
+    volumes:
+      - solr2_data:/var/solr
+    networks:
+      - solr-network
+    command: >
+      bash -c "
+        echo 'Waiting for ZooKeeper...'
+        while ! nc -z zookeeper 2181; do sleep 1; done
+        echo 'Starting SolrCloud...'
+        solr-foreground -c -z zookeeper:2181
+      "
+
+  # SolrCloud setup service - uploads configs and creates collections
+  solr-setup:
+    build:
+      context: .
+      dockerfile: Dockerfile9
+      args:
+        - "http_proxy=${HTTP_PROXY}"
+        - "https_proxy=${HTTPS_PROXY}"
+    container_name: warc-solr-setup
+    depends_on:
+      - solr9-node1
+      - solr9-node2
+    environment:
+      - ZK_HOST=zookeeper:2181
+    networks:
+      - solr-network
+    command: "/opt/scripts/setup-solrcloud.sh"
+    volumes:
+      - setup_logs:/var/log
+
+  # Hook to populate the SolrCloud with test data:
+  populate-cloud:
+    build:
+      context: .
+      dockerfile: Dockerfile9
+    command: "/opt/scripts/populate.sh"
+    environment:
+      - "SOLR_URL=http://solr9-node1:8983/solr/discovery"
+      - "SOLR_MODE=cloud"
+    depends_on:
+      - solr-setup
+    networks:
+      - solr-network
+    volumes:
+      - setup_logs:/var/log
+
+volumes:
+  zk_data:
+  zk_datalog:
+  solr1_data:
+  solr2_data:
+  setup_logs:
+
+networks:
+  solr-network:
+    driver: bridge
 

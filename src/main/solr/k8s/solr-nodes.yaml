@@ -1,0 +1,213 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: solr9-node1
+  namespace: warc-solr
+  labels:
+    app: solr9-node1
+spec:
+  ports:
+  - port: 8983
+    name: solr
+    targetPort: 8983
+  selector:
+    app: solr9-node1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: solr9-node2
+  namespace: warc-solr
+  labels:
+    app: solr9-node2
+spec:
+  ports:
+  - port: 8983
+    name: solr
+    targetPort: 8983
+  selector:
+    app: solr9-node2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: solr-lb
+  namespace: warc-solr
+  labels:
+    app: solr
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 8983
+    name: solr
+    targetPort: 8983
+  selector:
+    app: solr
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: solr1-data-pvc
+  namespace: warc-solr
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: solr2-data-pvc
+  namespace: warc-solr
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: solr9-node1
+  namespace: warc-solr
+  labels:
+    app: solr9-node1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: solr9-node1
+  template:
+    metadata:
+      labels:
+        app: solr9-node1
+        app: solr
+    spec:
+      initContainers:
+      - name: wait-for-zk
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          echo 'Waiting for ZooKeeper...'
+          until nc -z zookeeper 2181; do
+            echo 'Waiting for ZooKeeper...'
+            sleep 2
+          done
+          echo 'ZooKeeper is ready!'
+      containers:
+      - name: solr
+        image: your-registry/warc-solr:latest  # You'll need to build and push your Dockerfile9
+        ports:
+        - containerPort: 8983
+        env:
+        - name: ZK_HOST
+          value: "zookeeper:2181"
+        - name: SOLR_HOST
+          value: "solr9-node1"
+        - name: SOLR_HEAP
+          value: "1g"
+        command: ["solr-foreground"]
+        args: ["-c", "-z", "zookeeper:2181"]
+        volumeMounts:
+        - name: solr-data
+          mountPath: /var/solr
+        readinessProbe:
+          httpGet:
+            path: /solr/admin/info/system
+            port: 8983
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /solr/admin/info/system
+            port: 8983
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+      volumes:
+      - name: solr-data
+        persistentVolumeClaim:
+          claimName: solr1-data-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: solr9-node2
+  namespace: warc-solr
+  labels:
+    app: solr9-node2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: solr9-node2
+  template:
+    metadata:
+      labels:
+        app: solr9-node2
+        app: solr
+    spec:
+      initContainers:
+      - name: wait-for-zk
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+        - |
+          echo 'Waiting for ZooKeeper...'
+          until nc -z zookeeper 2181; do
+            echo 'Waiting for ZooKeeper...'
+            sleep 2
+          done
+          echo 'ZooKeeper is ready!'
+      containers:
+      - name: solr
+        image: your-registry/warc-solr:latest  # You'll need to build and push your Dockerfile9
+        ports:
+        - containerPort: 8983
+        env:
+        - name: ZK_HOST
+          value: "zookeeper:2181"
+        - name: SOLR_HOST
+          value: "solr9-node2"
+        - name: SOLR_HEAP
+          value: "1g"
+        command: ["solr-foreground"]
+        args: ["-c", "-z", "zookeeper:2181"]
+        volumeMounts:
+        - name: solr-data
+          mountPath: /var/solr
+        readinessProbe:
+          httpGet:
+            path: /solr/admin/info/system
+            port: 8983
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /solr/admin/info/system
+            port: 8983
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+      volumes:
+      - name: solr-data
+        persistentVolumeClaim:
+          claimName: solr2-data-pvc
+
